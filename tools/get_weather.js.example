@@ -1,0 +1,39 @@
+/**
+ * Example custom tool: Get Weather
+ *
+ * To use: copy this file to get_weather.js
+ *   cp get_weather.js.example get_weather.js
+ */
+export default {
+  name: "get_weather",
+  label: "Get Weather",
+  description: "Get the current weather for a location. Simulates a slow API call (5 seconds).",
+  parameters: {
+    type: "object",
+    properties: {
+      location: {
+        type: "string",
+        description: "The location to get weather for (e.g., 'San Francisco', 'London')",
+      },
+    },
+    required: ["location"],
+  },
+  execute: async (toolCallId, { location }, signal) => {
+    // Simulate slow API call
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    // Check if aborted during wait
+    if (signal?.aborted) {
+      throw new Error("Weather request was cancelled");
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Weather in ${location}: sunny and 21 C`,
+        },
+      ],
+    };
+  },
+};
