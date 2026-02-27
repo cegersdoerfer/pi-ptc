@@ -71,65 +71,67 @@ If you need additional tools available in the PTC environment, you must add them
 
 ## Usage
 
-Once installed, Claude can use the `code_execution` tool to run Python code with tool calling:
+Once installed, Claude can use the `code_execution` tool to run Python code with tool calling. Any tool available in the PTC environment — both pi's built-in tools and your [custom tools](#custom-tools) — can be called as an async Python function.
 
-### Example 1: Batch File Processing
+The real power of PTC is orchestrating **custom tools** in ways that would otherwise require many LLM round-trips. Pi's built-in tools (`glob`, `read`, `bash`) are also available but can often be replaced with standard Python.
+
+### Example: Multi-step API workflow
+
+Suppose you have custom tools `query_db` and `send_notification` registered in `tools/`:
 
 ```python
-files = await glob(pattern="**/*.ts")
+# Fetch all overdue orders and notify their owners — single LLM round-trip
+orders = await query_db(sql="SELECT id, owner_email FROM orders WHERE due < NOW() AND status = 'pending'")
+
+notified = 0
+for order in orders:
+    await send_notification(
+        to=order["owner_email"],
+        subject=f"Order #{order['id']} is overdue",
+        body="Please review your order status."
+    )
+    notified += 1
+
+return f"Notified {notified} owners about overdue orders"
+```
+
+Without PTC, Claude would need a separate LLM round-trip for each `query_db` and `send_notification` call, consuming context tokens on every intermediate result.
+
+### Example: Aggregating results from a custom tool
+
+```python
+# Custom tool "get_weather" registered in tools/
+cities = ["London", "Tokyo", "New York", "Sydney"]
 results = []
-for file_path in files[:10]:  # Process first 10 files
-    content = await read(file_path=file_path)
-    if "TODO" in content:
-        results.append(file_path)
 
-return f"Found {len(results)} files with TODOs:\n" + "\n".join(results)
+for city in cities:
+    weather = await get_weather(location=city)
+    results.append(f"{city}: {weather}")
+
+return "\n".join(results)
 ```
 
-### Example 2: Conditional Logic
+### Example: Mixing custom tools with built-in tools
 
 ```python
-status = await bash(command="git status --porcelain")
-if status:
-    print("Repository has uncommitted changes")
-    await bash(command="git add .")
-    await bash(command='git commit -m "Auto commit"')
-    return "Changes committed"
+# Use built-in glob/read to find config, then pass to a custom tool
+config = await read(file_path="deploy.yaml")
+result = await deploy_service(config=config, environment="staging")
+return f"Deploy result: {result}"
+```
+
+### Example: Conditional logic with custom tools
+
+```python
+status = await check_service_health(service="api")
+
+if status["healthy"]:
+    return "All services healthy"
 else:
-    return "Repository is clean"
-```
-
-### Example 3: Data Aggregation
-
-```python
-test_files = await glob(pattern="**/*.test.ts")
-total_lines = 0
-
-for file_path in test_files:
-    content = await read(file_path=file_path)
-    total_lines += len(content.split("\n"))
-
-return f"Total test code: {total_lines} lines across {len(test_files)} files"
-```
-
-### Example 4: Complex Analysis
-
-```python
-# Find all TypeScript files
-files = await glob(pattern="src/**/*.ts")
-
-# Analyze each file for potential issues
-issues = []
-for file_path in files:
-    content = await read(file_path=file_path)
-
-    # Check for common issues
-    if "any" in content:
-        issues.append(f"{file_path}: Uses 'any' type")
-    if "console.log" in content:
-        issues.append(f"{file_path}: Contains console.log")
-
-return f"Found {len(issues)} potential issues:\n" + "\n".join(issues[:20])
+    # Restart and re-check
+    await restart_service(service="api")
+    recheck = await check_service_health(service="api")
+    return f"Restarted api — now {'healthy' if recheck['healthy'] else 'still unhealthy'}"
 ```
 
 ## Custom Tools
