@@ -9,10 +9,6 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
-// Built-in agent tools that are implemented natively in the subprocess
-// (the agent framework doesn't expose execute functions for these to extensions)
-const BUILTIN_TOOL_NAMES = new Set(["read", "write", "edit", "bash", "grep", "find", "ls"]);
-
 /**
  * CodeExecutor orchestrates TypeScript code execution with RPC tool calling
  */
@@ -28,32 +24,28 @@ export class CodeExecutor {
   async execute(userCode: string, options: ExecutionOptions): Promise<string> {
     const { cwd, signal, onUpdate } = options;
 
-    // Get all available tools
-    const allTools = this.toolRegistry.getAllTools();
-    const toolsMap = new Map(allTools.filter((t) => !BUILTIN_TOOL_NAMES.has(t.name)).map((t) => [t.name, t]));
+    // Get all available tools (pass cwd so built-in tools get working execute functions)
+    const allTools = this.toolRegistry.getAllTools(cwd);
+    const toolsMap = new Map(allTools.map((t) => [t.name, t]));
 
-    // Generate TypeScript RPC wrapper functions for extension tools only
-    // (built-in tools are provided as native implementations via builtins.ts)
-    const toolWrappers = generateToolWrappers(allTools.filter((t) => !BUILTIN_TOOL_NAMES.has(t.name)));
+    // Generate TypeScript wrapper functions for all tools
+    const toolWrappers = generateToolWrappers(allTools);
 
     // Read TypeScript runtime files - try multiple possible locations
     let rpcCode: string;
     let runtimeCode: string;
-    let builtinsCode: string;
 
     try {
       // Try dist/ts-runtime first (for installed package)
       const distRuntimeDir = path.join(__dirname, "../src/ts-runtime");
       rpcCode = fs.readFileSync(path.join(distRuntimeDir, "rpc.ts"), "utf-8");
       runtimeCode = fs.readFileSync(path.join(distRuntimeDir, "runtime.ts"), "utf-8");
-      builtinsCode = fs.readFileSync(path.join(distRuntimeDir, "builtins.ts"), "utf-8");
     } catch {
       try {
         // Try src/ts-runtime (for development)
         const srcRuntimeDir = path.join(__dirname, "ts-runtime");
         rpcCode = fs.readFileSync(path.join(srcRuntimeDir, "rpc.ts"), "utf-8");
         runtimeCode = fs.readFileSync(path.join(srcRuntimeDir, "runtime.ts"), "utf-8");
-        builtinsCode = fs.readFileSync(path.join(srcRuntimeDir, "builtins.ts"), "utf-8");
       } catch (error) {
         throw new Error(
           `Failed to load TypeScript runtime files: ${error instanceof Error ? error.message : String(error)}`
@@ -65,8 +57,6 @@ export class CodeExecutor {
     const userCodeLines = userCode.split("\n");
 
     const prefix = `
-${builtinsCode}
-
 ${rpcCode}
 
 ${toolWrappers}
@@ -121,7 +111,7 @@ _runtime_main(user_main);
         proc,
         toolsMap,
         async (toolName: string, params: any) => {
-          return await this.toolRegistry.executeTool(toolName, params, this.ctx, signal);
+          return await this.toolRegistry.executeTool(toolName, params, this.ctx, signal, cwd);
         },
         userCode,
         signal,

@@ -1,5 +1,46 @@
 import type { ToolDefinition, ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import {
+  createReadTool,
+  createBashTool,
+  createEditTool,
+  createWriteTool,
+  createGrepTool,
+  createFindTool,
+  createLsTool,
+} from "@mariozechner/pi-coding-agent";
 import type { ToolInfo } from "./types";
+
+/**
+ * Create built-in tool instances with working execute functions.
+ * The factory functions from pi-coding-agent return AgentTool objects
+ * with a 4-arg execute signature; we wrap them to match the 5-arg
+ * ToolDefinition.execute signature used by our ToolInfo type.
+ */
+function createBuiltinTools(cwd: string): Map<string, ToolInfo> {
+  const factories = [
+    createReadTool,
+    createBashTool,
+    createEditTool,
+    createWriteTool,
+    createGrepTool,
+    createFindTool,
+    createLsTool,
+  ];
+
+  const builtins = new Map<string, ToolInfo>();
+  for (const factory of factories) {
+    const agentTool = factory(cwd);
+    builtins.set(agentTool.name, {
+      name: agentTool.name,
+      description: agentTool.description,
+      parameters: agentTool.parameters,
+      // Wrap 4-arg AgentTool.execute to match 5-arg ToolDefinition.execute
+      execute: (toolCallId, params, signal, onUpdate, _ctx) =>
+        (agentTool as any).execute(toolCallId, params, signal, onUpdate),
+    });
+  }
+  return builtins;
+}
 
 /**
  * Registry for tracking registered tools and their execute functions
@@ -37,32 +78,32 @@ export class ToolRegistry {
   }
 
   /**
-   * Get all registered tools
+   * Get all registered tools with working execute functions.
+   * Merges: intercepted extension tools + factory-created built-in tools + pi tool metadata.
    */
-  getAllTools(): ToolInfo[] {
-    // Combine our registered tools with pi.getAllTools()
+  getAllTools(cwd?: string): ToolInfo[] {
     const piTools = this.pi.getAllTools();
+    const builtins = cwd ? createBuiltinTools(cwd) : new Map<string, ToolInfo>();
     const allTools = new Map<string, ToolInfo>();
 
-    // Add tools from pi - preserve execute functions if they exist
+    // Add tools from pi metadata, using factory-created builtins for execute
     for (const piTool of piTools) {
-      const toolInfo: ToolInfo = {
-        name: piTool.name,
-        description: piTool.description,
-        parameters: piTool.parameters,
-        execute: (piTool as any).execute || (async () => {
-          throw new Error(`Tool ${piTool.name} execute function not available`);
-        }),
-      };
-      allTools.set(piTool.name, toolInfo);
-
-      // If this tool wasn't intercepted but has an execute function, store it in our registry
-      if (!this.tools.has(piTool.name) && (piTool as any).execute) {
-        this.tools.set(piTool.name, toolInfo);
+      const builtin = builtins.get(piTool.name);
+      if (builtin) {
+        allTools.set(piTool.name, builtin);
+      } else {
+        allTools.set(piTool.name, {
+          name: piTool.name,
+          description: piTool.description,
+          parameters: piTool.parameters,
+          execute: (piTool as any).execute || (async () => {
+            throw new Error(`Tool ${piTool.name} execute function not available`);
+          }),
+        });
       }
     }
 
-    // Override with our stored execute functions (for intercepted tools)
+    // Override with our intercepted tools (extension-registered tools with execute)
     for (const [name, tool] of this.tools.entries()) {
       allTools.set(name, tool);
     }
@@ -77,22 +118,17 @@ export class ToolRegistry {
     toolName: string,
     params: any,
     ctx: ExtensionContext,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    cwd?: string
   ): Promise<any> {
     let tool = this.tools.get(toolName);
 
-    // Fall back to pi.getAllTools() for built-in agent tools (read, glob, etc.)
-    // that weren't intercepted via registerTool
-    if (!tool) {
-      const piTools = this.pi.getAllTools();
-      const piTool = piTools.find(t => t.name === toolName);
-      if (piTool && (piTool as any).execute) {
-        tool = {
-          name: piTool.name,
-          description: piTool.description,
-          parameters: piTool.parameters,
-          execute: (piTool as any).execute,
-        };
+    // Fall back to factory-created built-in tools
+    if (!tool && cwd) {
+      const builtins = createBuiltinTools(cwd);
+      const builtin = builtins.get(toolName);
+      if (builtin) {
+        tool = builtin;
         // Cache for future calls
         this.tools.set(toolName, tool);
       }
