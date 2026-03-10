@@ -6,7 +6,7 @@ import type { RpcMessage, ToolInfo } from "./types";
 type ExecuteTool = (toolName: string, params: any) => Promise<any>;
 
 /**
- * RPC protocol handler for communicating with Python runtime
+ * RPC protocol handler for communicating with TypeScript subprocess runtime
  */
 export class RpcProtocol {
   private lineReader: readline.Interface;
@@ -156,14 +156,14 @@ export class RpcProtocol {
       // Execute the actual tool
       const result = await this.executeTool(msg.tool, msg.params);
 
-      // Send result back to Python
+      // Send result back to subprocess
       this.send({
         type: "tool_result",
         id: msg.id,
         content: result.content || [],
       });
     } catch (err) {
-      // Send error back to Python
+      // Send error back to subprocess
       this.send({
         type: "tool_result",
         id: msg.id,

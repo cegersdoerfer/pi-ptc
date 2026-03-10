@@ -1,5 +1,7 @@
 import { spawn, exec, execSync } from "child_process";
 import { promisify } from "util";
+import * as fs from "fs";
+import * as ts from "typescript";
 import type { SandboxManager } from "./types";
 
 const execAsync = promisify(exec);
@@ -8,12 +10,12 @@ const EXECUTION_TIMEOUT = 270_000; // 4.5 minutes in milliseconds
 
 /**
  * Subprocess-based sandbox implementation
- * Executes Python code in a local subprocess
+ * Executes TypeScript code in a local subprocess via tsx
  */
 class SubprocessSandbox implements SandboxManager {
-  spawn(code: string, cwd: string): import("child_process").ChildProcess {
-    // Spawn Python process with unbuffered output
-    return spawn("python3", ["-u", "-c", code], {
+  spawn(codeOrFile: string, cwd: string): import("child_process").ChildProcess {
+    // codeOrFile is a path to a temp .ts file
+    return spawn("npx", ["tsx", codeOrFile], {
       cwd,
       env: { ...process.env },
     });
@@ -26,7 +28,7 @@ class SubprocessSandbox implements SandboxManager {
 
 /**
  * Docker-based sandbox implementation
- * Executes Python code in an isolated Docker container
+ * Transpiles TypeScript to JavaScript on host, then executes in a Node.js container
  */
 class DockerSandbox implements SandboxManager {
   private containerId: string | null = null;
@@ -66,8 +68,19 @@ class DockerSandbox implements SandboxManager {
     this.containerId = null;
   }
 
-  spawn(code: string, cwd: string): import("child_process").ChildProcess {
+  spawn(codeOrFile: string, cwd: string): import("child_process").ChildProcess {
     try {
+      // Read the TypeScript file and transpile to JavaScript on the host
+      const tsCode = fs.readFileSync(codeOrFile, "utf-8");
+      const jsResult = ts.transpileModule(tsCode, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.CommonJS,
+          esModuleInterop: true,
+        },
+      });
+      const jsCode = jsResult.outputText;
+
       // Check if we need to create a new container
       if (!this.containerId || Date.now() - this.lastUsed > EXECUTION_TIMEOUT) {
         // Stop old container if it exists
@@ -80,13 +93,13 @@ class DockerSandbox implements SandboxManager {
           this.containerId = null;
         }
 
-        // Create new container
+        // Create new container with Node.js image
         const containerName = `pi-ptc-${this.sessionId}-${Date.now()}`;
         const output = execSync(
           `docker run -d --rm --network none --name ${containerName} ` +
           `-v "${cwd}:/workspace:ro" ` +
           `--memory 512m --cpus 1.0 ` +
-          `python:3.12-slim tail -f /dev/null`,
+          `node:22-slim tail -f /dev/null`,
           { encoding: "utf-8" }
         );
         this.containerId = output.trim();
@@ -94,8 +107,8 @@ class DockerSandbox implements SandboxManager {
 
       this.lastUsed = Date.now();
 
-      // Execute Python code in container
-      return spawn("docker", ["exec", "-i", this.containerId, "python3", "-u", "-c", code], {
+      // Execute JavaScript code in container
+      return spawn("docker", ["exec", "-i", this.containerId, "node", "-e", jsCode], {
         cwd,
       });
     } catch (error) {

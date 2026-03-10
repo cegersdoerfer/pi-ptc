@@ -1,6 +1,6 @@
 # Programmatic Tool Calling (PTC) Extension for pi-coding-agent
 
-An extension for [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) that enables Claude to write Python code that calls tools as async functions, dramatically reducing token usage and latency for multi-tool workflows.
+An extension for [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) that enables Claude to write TypeScript code that calls tools as async functions, dramatically reducing token usage and latency for multi-tool workflows.
 
 ## Quick Start
 
@@ -24,7 +24,7 @@ Restart pi-coding-agent. The `code_execution` tool is now available.
 2. Repeat for each tool call
 3. All intermediate tool results consume context tokens and add latency
 
-**Solution**: With PTC, Claude writes Python code that calls tools as async functions. The code executes locally with only the final output returned to Claude.
+**Solution**: With PTC, Claude writes TypeScript code that calls tools as async functions. The code executes locally with only the final output returned to Claude.
 
 ### Benefits
 
@@ -32,11 +32,11 @@ Restart pi-coding-agent. The `code_execution` tool is now available.
 - **Lower Latency**: Single LLM round-trip instead of multiple
 - **Complex Workflows**: Enable sophisticated multi-tool logic with loops, conditionals, and data aggregation
 - **Optional Isolation**: Docker containers available for additional security (opt-in)
+- **Optional Type Checking**: Enable compile-time type checking via `PTC_TYPE_CHECK=true`
 
 ## Prerequisites
 
 - Node.js 18+
-- Python 3.12+ (must be available as `python3`)
 - [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) installed
 - Docker (optional, see [Execution Modes](#execution-modes) below)
 
@@ -65,78 +65,81 @@ Restart pi-coding-agent. The `code_execution` tool is now available.
 
 ## Available Tools
 
-By default, Python code running in PTC has access to pi-coding-agent's **built-in tools only** (e.g. `glob`, `read`, `bash`). Tools from other pi extensions are **not** available — the pi extensions API does not currently support extensions exposing tools to each other.
+By default, TypeScript code running in PTC has access to pi-coding-agent's **built-in tools only** (e.g. `glob`, `read`, `bash`). Tools from other pi extensions are **not** available — the pi extensions API does not currently support extensions exposing tools to each other.
 
 If you need additional tools available in the PTC environment, you must add them as custom tools in the `tools/` directory. See [Custom Tools](#custom-tools) for details.
 
 ## Usage
 
-Once installed, Claude can use the `code_execution` tool to run Python code with tool calling. Any tool available in the PTC environment — both pi's built-in tools and your [custom tools](#custom-tools) — can be called as an async Python function.
+Once installed, Claude can use the `code_execution` tool to run TypeScript code with tool calling. Any tool available in the PTC environment — both pi's built-in tools and your [custom tools](#custom-tools) — can be called as an async TypeScript function.
 
-The real power of PTC is orchestrating **custom tools** in ways that would otherwise require many LLM round-trips. Pi's built-in tools (`glob`, `read`, `bash`) are also available but can often be replaced with standard Python.
+The real power of PTC is orchestrating **custom tools** in ways that would otherwise require many LLM round-trips. Pi's built-in tools (`glob`, `read`, `bash`) are also available but can often be replaced with standard Node.js.
 
 ### Example: Multi-step API workflow
 
 Suppose you have custom tools `query_db` and `send_notification` registered in `tools/`:
 
-```python
-# Fetch all overdue orders and notify their owners — single LLM round-trip
-orders = await query_db(sql="SELECT id, owner_email FROM orders WHERE due < NOW() AND status = 'pending'")
+```typescript
+// Fetch all overdue orders and notify their owners — single LLM round-trip
+const orders = await query_db({ sql: "SELECT id, owner_email FROM orders WHERE due < NOW() AND status = 'pending'" });
 
-notified = 0
-for order in orders:
-    await send_notification(
-        to=order["owner_email"],
-        subject=f"Order #{order['id']} is overdue",
-        body="Please review your order status."
-    )
-    notified += 1
+let notified = 0;
+for (const order of orders) {
+  await send_notification({
+    to: order.owner_email,
+    subject: `Order #${order.id} is overdue`,
+    body: "Please review your order status.",
+  });
+  notified++;
+}
 
-return f"Notified {notified} owners about overdue orders"
+return `Notified ${notified} owners about overdue orders`;
 ```
 
 Without PTC, Claude would need a separate LLM round-trip for each `query_db` and `send_notification` call, consuming context tokens on every intermediate result.
 
 ### Example: Aggregating results from a custom tool
 
-```python
-# Custom tool "get_weather" registered in tools/
-cities = ["London", "Tokyo", "New York", "Sydney"]
-results = []
+```typescript
+// Custom tool "get_weather" registered in tools/
+const cities = ["London", "Tokyo", "New York", "Sydney"];
+const results: string[] = [];
 
-for city in cities:
-    weather = await get_weather(location=city)
-    results.append(f"{city}: {weather}")
+for (const city of cities) {
+  const weather = await get_weather({ location: city });
+  results.push(`${city}: ${weather}`);
+}
 
-return "\n".join(results)
+return results.join("\n");
 ```
 
 ### Example: Mixing custom tools with built-in tools
 
-```python
-# Use built-in glob/read to find config, then pass to a custom tool
-config = await read(file_path="deploy.yaml")
-result = await deploy_service(config=config, environment="staging")
-return f"Deploy result: {result}"
+```typescript
+// Use built-in glob/read to find config, then pass to a custom tool
+const config = await read({ file_path: "deploy.yaml" });
+const result = await deploy_service({ config, environment: "staging" });
+return `Deploy result: ${result}`;
 ```
 
 ### Example: Conditional logic with custom tools
 
-```python
-status = await check_service_health(service="api")
+```typescript
+const status = await check_service_health({ service: "api" });
 
-if status["healthy"]:
-    return "All services healthy"
-else:
-    # Restart and re-check
-    await restart_service(service="api")
-    recheck = await check_service_health(service="api")
-    return f"Restarted api — now {'healthy' if recheck['healthy'] else 'still unhealthy'}"
+if (status.includes("healthy")) {
+  return "All services healthy";
+} else {
+  // Restart and re-check
+  await restart_service({ service: "api" });
+  const recheck = await check_service_health({ service: "api" });
+  return `Restarted api — now ${recheck.includes("healthy") ? "healthy" : "still unhealthy"}`;
+}
 ```
 
 ## Custom Tools
 
-Drop `.js` files in the `tools/` directory to register additional tools. These become available both as direct pi-coding-agent tools and as async functions inside `code_execution` Python code.
+Drop `.js` files in the `tools/` directory to register additional tools. These become available both as direct pi-coding-agent tools and as async functions inside `code_execution` TypeScript code.
 
 See `tools/get_weather.js.example` for a complete example:
 
@@ -148,7 +151,7 @@ Each file should default-export an object with:
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | yes | Tool name (becomes the Python function name) |
+| `name` | yes | Tool name (becomes the TypeScript function name) |
 | `label` | no | Display label |
 | `description` | yes | Description shown to the model |
 | `parameters` | yes | JSON Schema object describing the tool's parameters |
@@ -163,26 +166,27 @@ Only `.js` files are loaded — `.ts`, `.example`, etc. are ignored. Files are l
 ```
 User: "Analyze all TypeScript files and find bugs"
   ↓
-LLM generates Python code:
-  files = await glob(pattern="**/*.ts")
-  for file in files:
-      content = await read(file_path=file)
-      # analyze content...
+LLM generates TypeScript code:
+  const files = await glob({ pattern: "**/*.ts" });
+  for (const file of files.split("\n")) {
+      const content = await read({ file_path: file });
+      // analyze content...
+  }
   ↓
-code_execution tool called with Python code
+code_execution tool called with TypeScript code
   ↓
 Extension:
   1. Gets available tools from pi-coding-agent
-  2. Generates Python wrapper functions
+  2. Generates TypeScript wrapper functions
   3. Combines wrappers + user code
-  4. Starts Python process (Docker or subprocess)
+  4. Starts TypeScript process (tsx subprocess or Docker)
   ↓
-Python Runtime:
+TypeScript Runtime:
   1. Executes user code
   2. When calling a tool: sends RPC message to Node.js
   3. Node.js executes actual tool
-  4. Result returned to Python
-  5. Python continues execution
+  4. Result returned to TypeScript
+  5. TypeScript continues execution
   ↓
 Extension returns final output to LLM
 ```
@@ -190,22 +194,22 @@ Extension returns final output to LLM
 ### Components
 
 - **Extension (`src/index.ts`)**: Registers `code_execution` tool
-- **Sandbox Manager (`src/sandbox-manager.ts`)**: Manages Docker containers or Python subprocesses
-- **Code Executor (`src/code-executor.ts`)**: Orchestrates Python code execution
-- **Tool Wrapper Generator (`src/tool-wrapper.ts`)**: Converts tool definitions to Python async functions
-- **RPC Protocol (`src/rpc-protocol.ts` + `src/python-runtime/rpc.py`)**: JSON-based communication between Node.js and Python
-- **Python Runtime (`src/python-runtime/runtime.py`)**: Python execution environment
+- **Sandbox Manager (`src/sandbox-manager.ts`)**: Manages Docker containers or tsx subprocesses
+- **Code Executor (`src/code-executor.ts`)**: Orchestrates TypeScript code execution
+- **Tool Wrapper Generator (`src/tool-wrapper.ts`)**: Converts tool definitions to TypeScript async functions
+- **RPC Protocol (`src/rpc-protocol.ts` + `src/ts-runtime/rpc.ts`)**: JSON-based communication between host Node.js and subprocess
+- **TypeScript Runtime (`src/ts-runtime/runtime.ts`)**: Subprocess execution environment
 - **Tool Loader (`src/tool-loader.ts`)**: Discovers and loads custom tools from `tools/`
 
 ### Execution Modes
 
-The extension runs Python code in a local subprocess by default. Docker isolation is available as an opt-in feature.
+The extension runs TypeScript code in a local subprocess by default. Docker isolation is available as an opt-in feature.
 
 **Subprocess mode** (default):
 
-- Spawns a `python3` subprocess in the current working directory
+- Spawns a `tsx` subprocess in the current working directory
 - No additional isolation beyond subprocess boundaries
-- Simple setup with no external dependencies
+- Simple setup with no external dependencies beyond Node.js
 - Suitable for trusted environments where you control the code generation
 
 **Docker mode** (opt-in):
@@ -221,17 +225,26 @@ Then ensure Docker is installed and running:
 docker --version
 docker ps
 
-# Pull the Python image (optional, avoids slow first run)
-docker pull python:3.12-slim
+# Pull the Node.js image (optional, avoids slow first run)
+docker pull node:22-slim
 ```
 
-When enabled, each execution runs inside a container with:
+When enabled, the TypeScript code is transpiled to JavaScript on the host, then each execution runs inside a container with:
 - **Network disabled** (`--network none`) — code cannot make outbound requests
 - **Workspace mounted read-only** (`-v "$CWD:/workspace:ro"`)
 - **Resource limits**: 512 MB RAM, 1 CPU
 - **Container reuse**: Same container used for multiple executions within 4.5 minutes
 
 **Note**: Docker isolation provides defense-in-depth but doesn't prevent malicious code from using tools (like `bash`) to affect your system, since tool execution happens on the host via RPC.
+
+### Type Checking
+
+To enable optional compile-time type checking before execution:
+```bash
+export PTC_TYPE_CHECK=true
+```
+
+When enabled, TypeScript code is checked for type errors before execution. Any type errors are returned to the agent without running the code.
 
 ### Execution Limits
 
@@ -257,14 +270,14 @@ pi_PTC/
 │   ├── index.ts              # Extension entry point
 │   ├── sandbox-manager.ts    # Container/subprocess management
 │   ├── code-executor.ts      # Execution orchestration
-│   ├── tool-wrapper.ts       # Python wrapper generation
+│   ├── tool-wrapper.ts       # TypeScript wrapper generation
 │   ├── tool-loader.ts        # Custom tool discovery
-│   ├── rpc-protocol.ts       # RPC (Node.js side)
+│   ├── rpc-protocol.ts       # RPC (host Node.js side)
 │   ├── utils.ts              # Utilities
 │   ├── types.ts              # TypeScript types
-│   └── python-runtime/
-│       ├── runtime.py        # Python execution entry
-│       └── rpc.py            # RPC (Python side)
+│   └── ts-runtime/
+│       ├── runtime.ts        # Subprocess execution entry
+│       └── rpc.ts            # RPC (subprocess side)
 ├── tools/                    # Custom tool definitions (.js files)
 ├── dist/                     # Compiled output (git-ignored)
 ├── package.json
@@ -290,22 +303,27 @@ pi_PTC/
    ls dist/
    ```
 
-### Python execution fails
+### TypeScript execution fails
 
-1. Verify Python 3.12+ is available:
+1. Verify Node.js 18+ is available:
    ```bash
-   python3 --version
+   node --version
    ```
 
-2. If using Docker, check Docker is running:
+2. Verify tsx is installed (should be via npm install):
+   ```bash
+   npx tsx --version
+   ```
+
+3. If using Docker, check Docker is running:
    ```bash
    docker --version
    docker ps
    ```
 
-3. Check logs for detailed error messages
+4. Check logs for detailed error messages
 
-### Tool calls fail from Python
+### Tool calls fail from TypeScript
 
 1. Verify tool name matches exactly (check `pi.getAllTools()`)
 2. Check parameter types match schema
@@ -315,25 +333,25 @@ pi_PTC/
 
 For long-running operations:
 - Break into smaller chunks
-- Use progress updates: `print(f"Processed {i}/{total}")`
+- Use progress updates: `console.log(\`Processed ${i}/${total}\`)`
 - Consider if PTC is the right approach (very long operations might be better as separate tool calls)
 
 ## FAQ
 
-**Q: Can I use external Python packages?**
-A: Not by default. The execution environment only includes Python standard library. Future versions may support pip install.
+**Q: Can I use external npm packages?**
+A: Not by default. The execution environment only includes Node.js standard library. Future versions may support npm package installation.
 
 **Q: Can I call pi-coding-agent tools from nested functions?**
 A: Yes! All tool wrapper functions are async and can be called from any async context in your code.
 
 **Q: What happens if my code has a syntax error?**
-A: Python will raise a SyntaxError which will be returned to Claude with the full traceback for debugging.
+A: TypeScript/tsx will raise an error which will be returned to Claude with the full stack trace for debugging.
 
-**Q: Can I use threading or multiprocessing?**
+**Q: Can I use Worker threads?**
 A: Yes, but keep in mind the 4.5 minute timeout applies to the entire execution.
 
-**Q: How do I debug my Python code?**
-A: Use `print()` statements — they'll be captured and included in the output.
+**Q: How do I debug my TypeScript code?**
+A: Use `console.log()` statements — they'll be captured and included in the output.
 
 **Q: What's the overhead of PTC vs direct tool calls?**
 A: Slight overhead for a single tool call, but massive savings for 3+ sequential calls.

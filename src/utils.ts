@@ -18,13 +18,13 @@ export function truncateOutput(output: string): string {
 }
 
 /**
- * Format a Python exception for display
+ * Format an execution error for display
  */
-export function formatPythonError(message: string, traceback?: string): string {
+export function formatExecutionError(message: string, traceback?: string): string {
   if (traceback) {
-    return `Python execution error:\n${message}\n\nTraceback:\n${traceback}`;
+    return `Execution error:\n${message}\n\nStack trace:\n${traceback}`;
   }
-  return `Python execution error: ${message}`;
+  return `Execution error: ${message}`;
 }
 
 /**

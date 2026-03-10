@@ -16,7 +16,7 @@ let toolRegistry: ToolRegistry | null = null;
 let toolWatcher: { close(): void } | null = null;
 
 /**
- * Render Python code with current line highlighting during execution
+ * Render TypeScript code with current line highlighting during execution
  */
 function renderExecutingCode(
   codeLines: string[],
@@ -27,7 +27,7 @@ function renderExecutingCode(
   const lines: string[] = [];
 
   // Header
-  lines.push(theme.fg("muted", `Executing Python code (line ${currentLine}/${totalLines}):`));
+  lines.push(theme.fg("muted", `Executing TypeScript code (line ${currentLine}/${totalLines}):`));
   lines.push("");
 
   // Show code with line numbers and highlight
@@ -59,7 +59,7 @@ function renderExecutingCode(
 
 /**
  * PTC (Programmatic Tool Calling) Extension
- * Enables Claude to write Python code that calls tools as async functions
+ * Enables Claude to write TypeScript code that calls tools as async functions
  */
 export default async function ptcExtension(pi: ExtensionAPI, context: ExtensionContext) {
   // Initialize tool registry (intercepts tool registrations)
@@ -93,31 +93,34 @@ export default async function ptcExtension(pi: ExtensionAPI, context: ExtensionC
   pi.registerTool({
     name: "code_execution",
     label: "Code Execution",
-    description: `Execute Python code with async tool calling support.
+    description: `Execute TypeScript code with async tool calling support.
 
-This tool allows you to write Python code that calls other tools as async functions. All available tools are exposed as Python async functions that you can await.
+This tool allows you to write TypeScript code that calls other tools as async functions. All available tools are exposed as TypeScript async functions that you can await.
 
 Example:
-\`\`\`python
-# Read and analyze files
-files = await glob(pattern="**/*.ts")
-for file_path in files[:5]:
-    content = await read(file_path=file_path)
-    if "TODO" in content:
-        print(f"Found TODO in {file_path}")
+\`\`\`typescript
+// Read and analyze files
+const files = await glob({ pattern: "**/*.ts" });
+for (const filePath of files.split("\\n").slice(0, 5)) {
+  const content = await read({ file_path: filePath });
+  if (content.includes("TODO")) {
+    console.log(\`Found TODO in \${filePath}\`);
+  }
+}
 \`\`\`
 
 Key features:
-- All tools available as async Python functions
+- All tools available as async TypeScript functions
 - Multi-tool workflows execute in a single round-trip
 - Reduced token usage and latency
 - Subprocess execution (Docker isolation available via PTC_USE_DOCKER=true)
 - 4.5 minute timeout
+- Optional type checking via PTC_TYPE_CHECK=true
 
-The code runs in a Python 3.12 subprocess. Use standard Python libraries and async/await syntax.`,
+The code runs in a TypeScript subprocess via tsx. Use standard Node.js libraries and async/await syntax.`,
     parameters: Type.Object({
       code: Type.String({
-        description: "Python code to execute. Can use await to call any available tool.",
+        description: "TypeScript code to execute. Can use await to call any available tool.",
       }),
     }),
     execute: async (toolCallId, { code }, signal, onUpdate, ctx) => {
@@ -143,7 +146,7 @@ The code runs in a Python 3.12 subprocess. Use standard Python libraries and asy
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Python execution failed: ${message}`);
+        throw new Error(`TypeScript execution failed: ${message}`);
       }
     },
 

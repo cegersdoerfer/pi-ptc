@@ -3,14 +3,17 @@ import type { SandboxManager, ExecutionOptions } from "./types";
 import type { ToolRegistry } from "./tool-registry";
 import { generateToolWrappers } from "./tool-wrapper";
 import { RpcProtocol } from "./rpc-protocol";
-import { truncateOutput, formatPythonError } from "./utils";
+import { truncateOutput, formatExecutionError } from "./utils";
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 
 /**
- * CodeExecutor orchestrates Python code execution with RPC tool calling
+ * CodeExecutor orchestrates TypeScript code execution with RPC tool calling
  */
 export class CodeExecutor {
+  private tempFiles: string[] = [];
+
   constructor(
     private sandboxManager: SandboxManager,
     private toolRegistry: ToolRegistry,
@@ -24,32 +27,33 @@ export class CodeExecutor {
     const allTools = this.toolRegistry.getAllTools();
     const toolsMap = new Map(allTools.map((t) => [t.name, t]));
 
-    // Generate Python wrapper functions for all tools
+    // Generate TypeScript wrapper functions for all tools
     const toolWrappers = generateToolWrappers(allTools);
 
-    // Read Python runtime files - try multiple possible locations
+    // Read TypeScript runtime files - try multiple possible locations
     let rpcCode: string;
     let runtimeCode: string;
 
     try {
-      // Try dist/python-runtime first (for installed package)
-      const distRuntimeDir = path.join(__dirname, "../src/python-runtime");
-      rpcCode = fs.readFileSync(path.join(distRuntimeDir, "rpc.py"), "utf-8");
-      runtimeCode = fs.readFileSync(path.join(distRuntimeDir, "runtime.py"), "utf-8");
+      // Try dist/ts-runtime first (for installed package)
+      const distRuntimeDir = path.join(__dirname, "../src/ts-runtime");
+      rpcCode = fs.readFileSync(path.join(distRuntimeDir, "rpc.ts"), "utf-8");
+      runtimeCode = fs.readFileSync(path.join(distRuntimeDir, "runtime.ts"), "utf-8");
     } catch {
       try {
-        // Try src/python-runtime (for development)
-        const srcRuntimeDir = path.join(__dirname, "python-runtime");
-        rpcCode = fs.readFileSync(path.join(srcRuntimeDir, "rpc.py"), "utf-8");
-        runtimeCode = fs.readFileSync(path.join(srcRuntimeDir, "runtime.py"), "utf-8");
+        // Try src/ts-runtime (for development)
+        const srcRuntimeDir = path.join(__dirname, "ts-runtime");
+        rpcCode = fs.readFileSync(path.join(srcRuntimeDir, "rpc.ts"), "utf-8");
+        runtimeCode = fs.readFileSync(path.join(srcRuntimeDir, "runtime.ts"), "utf-8");
       } catch (error) {
         throw new Error(
-          `Failed to load Python runtime files: ${error instanceof Error ? error.message : String(error)}`
+          `Failed to load TypeScript runtime files: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }
 
     // Combine all code
+    const userCodeLines = userCode.split("\n");
     const combinedCode = `
 ${rpcCode}
 
@@ -57,43 +61,66 @@ ${toolWrappers}
 
 ${runtimeCode}
 
-# User code
-async def user_main():
-${userCode.split("\n").map(line => "    " + line).join("\n")}
+// User code
+async function user_main() {
+_reportProgress(1, ${userCodeLines.length});
+${userCodeLines.map(line => "  " + line).join("\n")}
+}
 
-# Execute
-import asyncio
-asyncio.run(_runtime_main(user_main))
+// Execute
+_runtime_main(user_main);
 `;
 
-    // Spawn Python process using sandbox manager
-    const proc = this.sandboxManager.spawn(combinedCode, cwd);
+    // Write combined code to a temp file (tsx needs a file)
+    const tempFile = path.join(os.tmpdir(), `ptc-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`);
+    fs.writeFileSync(tempFile, combinedCode);
+    this.tempFiles.push(tempFile);
 
-    // Set up RPC protocol
-    const rpc = new RpcProtocol(
-      proc,
-      toolsMap,
-      async (toolName: string, params: any) => {
-        return await this.toolRegistry.executeTool(toolName, params, this.ctx, signal);
-      },
-      userCode,
-      signal,
-      onUpdate
-    );
+    // Debug: write a copy for inspection
+    const debugFile = path.join(os.tmpdir(), "ptc-debug.ts");
+    fs.writeFileSync(debugFile, combinedCode);
 
-    // Wait for completion
     try {
-      const output = await rpc.waitForCompletion();
-      return truncateOutput(output);
-    } catch (error) {
-      if (error instanceof Error) {
-        // Check if this is a Python error with traceback
-        if (error.message.includes("Python execution error")) {
-          throw error;
+      // Spawn TypeScript process using sandbox manager
+      const proc = this.sandboxManager.spawn(tempFile, cwd);
+
+      // Set up RPC protocol
+      const rpc = new RpcProtocol(
+        proc,
+        toolsMap,
+        async (toolName: string, params: any) => {
+          return await this.toolRegistry.executeTool(toolName, params, this.ctx, signal);
+        },
+        userCode,
+        signal,
+        onUpdate
+      );
+
+      // Wait for completion
+      try {
+        const output = await rpc.waitForCompletion();
+        return truncateOutput(output);
+      } catch (error) {
+        if (error instanceof Error) {
+          if (error.message.includes("Execution error")) {
+            throw error;
+          }
+          throw new Error(formatExecutionError(error.message));
         }
-        throw new Error(formatPythonError(error.message));
+        throw error;
       }
-      throw error;
+    } finally {
+      // Clean up temp file
+      this.cleanupTempFile(tempFile);
+    }
+  }
+
+  private cleanupTempFile(filePath: string): void {
+    try {
+      fs.unlinkSync(filePath);
+      this.tempFiles = this.tempFiles.filter(f => f !== filePath);
+    } catch {
+      // Ignore cleanup errors
     }
   }
 }

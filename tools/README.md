@@ -6,7 +6,7 @@ Each file should export a default object with the following fields:
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | yes | Tool name (used as the Python function name) |
+| `name` | yes | Tool name (used as the TypeScript function name) |
 | `label` | no | Display label |
 | `description` | yes | Description shown to the model |
 | `parameters` | yes | JSON Schema object describing the tool's parameters |

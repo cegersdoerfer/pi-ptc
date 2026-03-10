@@ -4,12 +4,12 @@ import type { ChildProcess } from "child_process";
 
 export interface SandboxManager {
   /**
-   * Spawn a Python process in the sandbox for RPC communication
-   * @param code Python code to execute
+   * Spawn a TypeScript process in the sandbox for RPC communication
+   * @param codeOrFile Path to TypeScript file (subprocess) or file to transpile (Docker)
    * @param cwd Current working directory
    * @returns ChildProcess for bidirectional communication
    */
-  spawn(code: string, cwd: string): ChildProcess;
+  spawn(codeOrFile: string, cwd: string): ChildProcess;
 
   /**
    * Cleanup sandbox resources
