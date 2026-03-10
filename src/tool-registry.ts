@@ -79,7 +79,25 @@ export class ToolRegistry {
     ctx: ExtensionContext,
     signal?: AbortSignal
   ): Promise<any> {
-    const tool = this.tools.get(toolName);
+    let tool = this.tools.get(toolName);
+
+    // Fall back to pi.getAllTools() for built-in agent tools (read, glob, etc.)
+    // that weren't intercepted via registerTool
+    if (!tool) {
+      const piTools = this.pi.getAllTools();
+      const piTool = piTools.find(t => t.name === toolName);
+      if (piTool && (piTool as any).execute) {
+        tool = {
+          name: piTool.name,
+          description: piTool.description,
+          parameters: piTool.parameters,
+          execute: (piTool as any).execute,
+        };
+        // Cache for future calls
+        this.tools.set(toolName, tool);
+      }
+    }
+
     if (!tool) {
       throw new Error(`Unknown tool: ${toolName}. Available: ${Array.from(this.tools.keys()).join(', ')}`);
     }
